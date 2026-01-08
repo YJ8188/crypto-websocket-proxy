@@ -8,7 +8,8 @@ const WebSocket = require('ws');
 
 // 配置
 const PORT = process.env.PORT || 3000;
-const BINANCE_WS_URL = 'wss://stream.binance.com:9443/ws/btcusdt@ticker';
+// 使用所有币种的数组数据流（支持多个币种）
+const BINANCE_WS_URL = 'wss://stream.binance.com:9443/ws/!ticker@arr';
 
 // 存储所有连接的客户端
 const clients = new Set();
@@ -18,6 +19,7 @@ let binanceWs = null;
 
 function connectToBinance() {
     console.log('[代理服务器] 正在连接币安 WebSocket...');
+    console.log('[代理服务器] 连接地址:', BINANCE_WS_URL);
     
     binanceWs = new WebSocket(BINANCE_WS_URL);
 

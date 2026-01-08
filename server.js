@@ -28,9 +28,17 @@ function connectToBinance() {
     });
 
     binanceWs.on('message', (data) => {
-        // 收到币安数据，转发给所有客户端
-        const message = data.toString();
-        broadcast(message);
+        // 收到币安数据，直接转发原始数据（Buffer）
+        // 调试：打印数据信息
+        try {
+            const message = data.toString();
+            const parsed = JSON.parse(message);
+            console.log(`[代理服务器] 📦 收到币安数据: 类型=${Array.isArray(parsed) ? 'Array' : typeof parsed}, 长度=${Array.isArray(parsed) ? parsed.length : 'N/A'}`);
+        } catch (e) {
+            console.log(`[代理服务器] 📦 收到币安数据: 无法解析，原始长度=${data.length}`);
+        }
+
+        broadcast(data);
     });
 
     binanceWs.on('error', (error) => {
@@ -48,6 +56,7 @@ function broadcast(message) {
     clients.forEach(client => {
         if (client.readyState === WebSocket.OPEN) {
             try {
+                // 直接发送原始数据（Buffer 或 String）
                 client.send(message);
             } catch (error) {
                 console.error('[代理服务器] 发送消息失败:', error.message);

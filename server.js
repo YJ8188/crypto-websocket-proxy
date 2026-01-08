@@ -43,10 +43,13 @@ function connectToBinance() {
 
     binanceWs.on('error', (error) => {
         console.error('[代理服务器] ❌ 币安 WebSocket 错误:', error.message);
+        console.error('[代理服务器] 错误详情:', error);
     });
 
-    binanceWs.on('close', () => {
-        console.log('[代理服务器] ⚠️ 币安 WebSocket 连接断开，5秒后重连...');
+    binanceWs.on('close', (code, reason) => {
+        console.log(`[代理服务器] ⚠️ 币安 WebSocket 连接断开`);
+        console.log(`[代理服务器] 关闭代码: ${code}, 原因: ${reason || '无'}`);
+        console.log(`[代理服务器] 5秒后重连...`);
         setTimeout(connectToBinance, 5000);
     });
 }

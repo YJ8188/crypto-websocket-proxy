@@ -29,13 +29,17 @@ function connectToBinance() {
 
     binanceWs.on('message', (data) => {
         // 收到币安数据，直接转发原始数据（Buffer）
-        // 调试：打印数据信息
-        try {
-            const message = data.toString();
-            const parsed = JSON.parse(message);
-            console.log(`[代理服务器] 📦 收到币安数据: 类型=${Array.isArray(parsed) ? 'Array' : typeof parsed}, 长度=${Array.isArray(parsed) ? parsed.length : 'N/A'}`);
-        } catch (e) {
-            console.log(`[代理服务器] 📦 收到币安数据: 无法解析，原始长度=${data.length}`);
+        // 只在首次收到数据时打印日志，避免日志过多
+        if (!binanceWs.hasReceivedData) {
+            try {
+                const message = data.toString();
+                const parsed = JSON.parse(message);
+                console.log(`[代理服务器] 📦 首次收到币安数据: 类型=${Array.isArray(parsed) ? 'Array' : typeof parsed}, 长度=${Array.isArray(parsed) ? parsed.length : 'N/A'}`);
+                binanceWs.hasReceivedData = true;
+            } catch (e) {
+                console.log(`[代理服务器] 📦 首次收到币安数据: 无法解析，原始长度=${data.length}`);
+                binanceWs.hasReceivedData = true;
+            }
         }
 
         broadcast(data);
@@ -154,18 +158,19 @@ setInterval(() => {
             clients.delete(client);
         }
     });
-    
+
+    // 只在有变化时打印日志
     if (disconnectedClients.length > 0) {
         console.log(`[代理服务器] 🧹 清理了 ${disconnectedClients.length} 个断开的连接`);
     }
-    
+
     // 发送心跳消息给所有客户端（保持连接活跃）
     const heartbeatMessage = JSON.stringify({
         type: 'heartbeat',
         timestamp: new Date().toISOString(),
         server_time: Date.now()
     });
-    
+
     let sentCount = 0;
     clients.forEach(client => {
         if (client.readyState === WebSocket.OPEN) {
@@ -178,8 +183,11 @@ setInterval(() => {
             }
         }
     });
-    
-    console.log(`[代理服务器] 💓 心跳检测 - 当前连接数: ${clients.size}, 已发送: ${sentCount}`);
+
+    // 只在有客户端连接时打印心跳日志
+    if (clients.size > 0) {
+        console.log(`[代理服务器] 💓 心跳检测 - 当前连接数: ${clients.size}, 已发送: ${sentCount}`);
+    }
 }, 30000);
 
 // 启动币安连接
@@ -196,9 +204,17 @@ httpServer.listen(PORT, () => {
 
 // 优雅关闭
 process.on('SIGTERM', () => {
+    // 防止多次处理 SIGTERM
+    if (process.isShuttingDown) {
+        console.log('[代理服务器] ⚠️ 已经在关闭中，忽略重复的 SIGTERM');
+        return;
+    }
+
+    process.isShuttingDown = true;
+
     console.log('[代理服务器] ⚠️ 收到 SIGTERM 信号，Render 正在重启服务器...');
     console.log('[代理服务器] 💾 保存当前状态...');
-    
+
     // 关闭所有客户端连接（优雅关闭）
     clients.forEach(client => {
         if (client.readyState === WebSocket.OPEN) {
@@ -214,21 +230,21 @@ process.on('SIGTERM', () => {
             client.close();
         }
     });
-    
+
     console.log(`[代理服务器] 已通知 ${clients.size} 个客户端服务器即将重启`);
-    
+
     // 关闭币安连接
     if (binanceWs && binanceWs.readyState === WebSocket.OPEN) {
         binanceWs.close();
         console.log('[代理服务器] 币安连接已关闭');
     }
-    
+
     // 关闭服务器
     wss.close(() => {
         console.log('[代理服务器] ✅ 服务器已准备关闭');
         process.exit(0);
     });
-    
+
     // 10秒后强制退出（防止卡住）
     setTimeout(() => {
         console.error('[代理服务器] ⚠️ 强制退出（超时）');

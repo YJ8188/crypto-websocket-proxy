@@ -70,12 +70,7 @@ wss.on('connection', (ws, req) => {
     // 添加到客户端集合
     clients.add(ws);
 
-    // 发送欢迎消息
-    ws.send(JSON.stringify({
-        type: 'connected',
-        message: '已连接到 WebSocket 代理服务器',
-        timestamp: new Date().toISOString()
-    }));
+    // 不发送欢迎消息，避免干扰币安数据格式
 
     // 处理客户端消息
     ws.on('message', (message) => {
@@ -112,17 +107,11 @@ wss.on('connection', (ws, req) => {
     });
 });
 
-// 心跳检测 - 每30秒发送一次
+// 心跳检测 - 每30秒记录一次（不发送消息给客户端）
 setInterval(() => {
-    const pingMessage = JSON.stringify({
-        type: 'ping',
-        timestamp: new Date().toISOString()
-    });
-    
+    // 清理断开的连接
     clients.forEach(client => {
-        if (client.readyState === WebSocket.OPEN) {
-            client.send(pingMessage);
-        } else {
+        if (client.readyState !== WebSocket.OPEN) {
             clients.delete(client);
         }
     });

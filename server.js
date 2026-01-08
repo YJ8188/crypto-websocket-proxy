@@ -69,9 +69,27 @@ function broadcast(message) {
     });
 }
 
-// 创建 WebSocket 服务器
+// 创建 HTTP 服务器（用于健康检查）
+const http = require('http');
+const httpServer = http.createServer((req, res) => {
+    if (req.url === '/health' || req.url === '/') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+            status: 'ok',
+            timestamp: new Date().toISOString(),
+            uptime: process.uptime(),
+            clients: clients.size,
+            binance_connected: binanceWs && binanceWs.readyState === 1
+        }));
+    } else {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Not found' }));
+    }
+});
+
+// 创建 WebSocket 服务器（复用 HTTP 服务器）
 const wss = new WebSocket.Server({ 
-    port: PORT,
+    server: httpServer,
     clientTracking: true 
 });
 
@@ -129,11 +147,17 @@ wss.on('connection', (ws, req) => {
 // 心跳检测 - 每30秒记录一次并发送心跳给客户端
 setInterval(() => {
     // 清理断开的连接
+    const disconnectedClients = [];
     clients.forEach(client => {
         if (client.readyState !== WebSocket.OPEN) {
+            disconnectedClients.push(client);
             clients.delete(client);
         }
     });
+    
+    if (disconnectedClients.length > 0) {
+        console.log(`[代理服务器] 🧹 清理了 ${disconnectedClients.length} 个断开的连接`);
+    }
     
     // 发送心跳消息给所有客户端（保持连接活跃）
     const heartbeatMessage = JSON.stringify({
@@ -142,10 +166,12 @@ setInterval(() => {
         server_time: Date.now()
     });
     
+    let sentCount = 0;
     clients.forEach(client => {
         if (client.readyState === WebSocket.OPEN) {
             try {
                 client.send(heartbeatMessage);
+                sentCount++;
             } catch (error) {
                 console.error('[代理服务器] 发送心跳失败:', error.message);
                 clients.delete(client);
@@ -153,38 +179,61 @@ setInterval(() => {
         }
     });
     
-    console.log(`[代理服务器] 💓 心跳检测 - 当前连接数: ${clients.size}`);
+    console.log(`[代理服务器] 💓 心跳检测 - 当前连接数: ${clients.size}, 已发送: ${sentCount}`);
 }, 30000);
 
 // 启动币安连接
 connectToBinance();
 
 // 启动服务器
-wss.on('listening', () => {
+httpServer.listen(PORT, () => {
     console.log(`[代理服务器] 🚀 WebSocket 代理服务器已启动`);
     console.log(`[代理服务器] 📡 监听端口: ${PORT}`);
-    console.log(`[代理服务器] 🌐 外部访问: wss://your-app-name.onrender.com`);
+    console.log(`[代理服务器] 🌐 WebSocket: wss://crypto-websocket-proxy.onrender.com`);
+    console.log(`[代理服务器] 🏥 健康检查: https://crypto-websocket-proxy.onrender.com/health`);
+    console.log(`[代理服务器] 🎉 服务器初始化完成，等待连接...`);
 });
 
 // 优雅关闭
 process.on('SIGTERM', () => {
-    console.log('[代理服务器] 收到 SIGTERM 信号，正在关闭...');
+    console.log('[代理服务器] ⚠️ 收到 SIGTERM 信号，Render 正在重启服务器...');
+    console.log('[代理服务器] 💾 保存当前状态...');
     
-    // 关闭所有客户端连接
+    // 关闭所有客户端连接（优雅关闭）
     clients.forEach(client => {
-        client.close();
+        if (client.readyState === WebSocket.OPEN) {
+            try {
+                client.send(JSON.stringify({
+                    type: 'server_restart',
+                    message: '服务器正在重启，请重新连接',
+                    timestamp: new Date().toISOString()
+                }));
+            } catch (e) {
+                // 忽略发送失败
+            }
+            client.close();
+        }
     });
     
+    console.log(`[代理服务器] 已通知 ${clients.size} 个客户端服务器即将重启`);
+    
     // 关闭币安连接
-    if (binanceWs) {
+    if (binanceWs && binanceWs.readyState === WebSocket.OPEN) {
         binanceWs.close();
+        console.log('[代理服务器] 币安连接已关闭');
     }
     
     // 关闭服务器
     wss.close(() => {
-        console.log('[代理服务器] 服务器已关闭');
+        console.log('[代理服务器] ✅ 服务器已准备关闭');
         process.exit(0);
     });
+    
+    // 10秒后强制退出（防止卡住）
+    setTimeout(() => {
+        console.error('[代理服务器] ⚠️ 强制退出（超时）');
+        process.exit(1);
+    }, 10000);
 });
 
 console.log('[代理服务器] 🎉 服务器初始化完成，等待连接...');

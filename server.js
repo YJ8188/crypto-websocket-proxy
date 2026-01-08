@@ -91,6 +91,13 @@ wss.on('connection', (ws, req) => {
         try {
             const data = JSON.parse(message);
             
+            // 处理客户端心跳响应
+            if (data.type === 'heartbeat_response' || data.type === 'client_heartbeat') {
+                console.log(`[代理服务器] 💓 收到客户端心跳响应`);
+                // 不需要回复，只是保持连接活跃
+                return;
+            }
+            
             // 如果客户端请求订阅特定币种
             if (data.action === 'subscribe' && data.symbols) {
                 console.log(`[代理服务器] 客户端请求订阅: ${data.symbols.join(', ')}`);
@@ -119,12 +126,30 @@ wss.on('connection', (ws, req) => {
     });
 });
 
-// 心跳检测 - 每30秒记录一次（不发送消息给客户端）
+// 心跳检测 - 每30秒记录一次并发送心跳给客户端
 setInterval(() => {
     // 清理断开的连接
     clients.forEach(client => {
         if (client.readyState !== WebSocket.OPEN) {
             clients.delete(client);
+        }
+    });
+    
+    // 发送心跳消息给所有客户端（保持连接活跃）
+    const heartbeatMessage = JSON.stringify({
+        type: 'heartbeat',
+        timestamp: new Date().toISOString(),
+        server_time: Date.now()
+    });
+    
+    clients.forEach(client => {
+        if (client.readyState === WebSocket.OPEN) {
+            try {
+                client.send(heartbeatMessage);
+            } catch (error) {
+                console.error('[代理服务器] 发送心跳失败:', error.message);
+                clients.delete(client);
+            }
         }
     });
     

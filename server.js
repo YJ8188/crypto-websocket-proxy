@@ -44,62 +44,14 @@ function getCachedData() {
 // 创建币安 WebSocket 连接
 let binanceWs = null;
 
-// 初始化时从币安 HTTP API 获取所有交易对
-async function initializeMarketData() {
-    console.log('[代理服务器] 🔄 正在从币安 HTTP API 获取所有交易对...');
-    
-    try {
-        const https = require('https');
-        const url = 'https://api.binance.com/api/v3/ticker/24hr';
-        
-        return new Promise((resolve, reject) => {
-            https.get(url, (res) => {
-                let data = '';
-                
-                res.on('data', (chunk) => {
-                    data += chunk;
-                });
-                
-                res.on('end', () => {
-                    try {
-                        const allTickers = JSON.parse(data);
-                        // 过滤出所有 USDT 交易对
-                        const usdtTickers = allTickers.filter(ticker => ticker.symbol.endsWith('USDT'));
-                        console.log(`[代理服务器] ✅ 从币安 API 获取了 ${usdtTickers.length} 个 USDT 交易对`);
-                        
-                        // 更新缓存
-                        updateCache(usdtTickers);
-                        resolve(usdtTickers);
-                    } catch (error) {
-                        console.error('[代理服务器] ❌ 解析币安 API 响应失败:', error);
-                        reject(error);
-                    }
-                });
-            }).on('error', (error) => {
-                console.error('[代理服务器] ❌ 请求币安 API 失败:', error);
-                reject(error);
-            });
-        });
-    } catch (error) {
-        console.error('[代理服务器] ❌ 初始化市场数据失败:', error);
-        throw error;
-    }
-}
-
 function connectToBinance() {
     console.log('[代理服务器] 正在连接币安 WebSocket...');
     console.log('[代理服务器] 连接地址:', BINANCE_WS_URL);
     
     binanceWs = new WebSocket(BINANCE_WS_URL);
 
-    binanceWs.on('open', async () => {
+    binanceWs.on('open', () => {
         console.log('[代理服务器] ✅ 成功连接到币安 WebSocket');
-        // 连接成功后，立即获取所有交易对
-        try {
-            await initializeMarketData();
-        } catch (error) {
-            console.error('[代理服务器] ⚠️ 初始化市场数据失败，将使用 WebSocket 数据:', error);
-        }
     });
 
     binanceWs.on('message', (data) => {
@@ -110,18 +62,7 @@ function connectToBinance() {
             
             // 更新缓存（只更新有效的数据）
             if (Array.isArray(parsed) && parsed.length > 0) {
-                // 如果缓存为空，先初始化缓存
-                if (!marketDataCache) {
-                    updateCache(parsed);
-                } else {
-                    // 如果缓存已存在，只更新活跃交易对的价格
-                    parsed.forEach(wsTicker => {
-                        const cacheIndex = marketDataCache.findIndex(t => t.symbol === wsTicker.symbol);
-                        if (cacheIndex !== -1) {
-                            marketDataCache[cacheIndex] = wsTicker;
-                        }
-                    });
-                }
+                updateCache(parsed);
             }
         } catch (e) {
             // 如果解析失败，仍然转发原始数据，但不更新缓存

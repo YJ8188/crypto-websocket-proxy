@@ -73,9 +73,25 @@ function broadcast(message) {
     });
 }
 
-// 创建 HTTP 服务器（用于健康检查）
+// 创建 HTTP 服务器（用于健康检查和 K 线数据代理）
 const http = require('http');
-const httpServer = http.createServer((req, res) => {
+const https = require('https');
+const url = require('url');
+
+const httpServer = http.createServer(async (req, res) => {
+    // 设置 CORS 头（允许所有域名访问）
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
+    // 处理 OPTIONS 预检请求
+    if (req.method === 'OPTIONS') {
+        res.writeHead(200);
+        res.end();
+        return;
+    }
+
+    // 健康检查端点
     if (req.url === '/health' || req.url === '/') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({
@@ -85,10 +101,63 @@ const httpServer = http.createServer((req, res) => {
             clients: clients.size,
             binance_connected: binanceWs && binanceWs.readyState === 1
         }));
-    } else {
-        res.writeHead(404, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Not found' }));
+        return;
     }
+
+    // K 线数据代理端点
+    if (req.url.startsWith('/api/klines')) {
+        try {
+            const parsedUrl = url.parse(req.url, true);
+            const { symbol, interval, limit } = parsedUrl.query;
+
+            if (!symbol) {
+                res.writeHead(400, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ error: 'Missing symbol parameter' }));
+                return;
+            }
+
+            // 转发请求到币安 K 线 API
+            const binanceKlinesUrl = `https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${interval || '1d'}&limit=${limit || '7'}`;
+            
+            console.log(`[代理服务器] 📊 代理 K 线请求: ${binanceKlinesUrl}`);
+
+            // 使用 https 模块请求币安 API
+            https.get(binanceKlinesUrl, (binanceRes) => {
+                let data = '';
+
+                binanceRes.on('data', (chunk) => {
+                    data += chunk;
+                });
+
+                binanceRes.on('end', () => {
+                    try {
+                        const jsonData = JSON.parse(data);
+                        res.writeHead(200, { 'Content-Type': 'application/json' });
+                        res.end(JSON.stringify(jsonData));
+                        console.log(`[代理服务器] ✅ K 线数据获取成功: ${symbol}`);
+                    } catch (error) {
+                        console.error('[代理服务器] ❌ 解析币安响应失败:', error);
+                        res.writeHead(500, { 'Content-Type': 'application/json' });
+                        res.end(JSON.stringify({ error: 'Failed to parse response' }));
+                    }
+                });
+            }).on('error', (error) => {
+                console.error('[代理服务器] ❌ 请求币安 K 线 API 失败:', error);
+                res.writeHead(500, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ error: 'Failed to fetch klines data' }));
+            });
+
+        } catch (error) {
+            console.error('[代理服务器] ❌ K 线代理错误:', error);
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Internal server error' }));
+        }
+        return;
+    }
+
+    // 404 处理
+    res.writeHead(404, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'Not found' }));
 });
 
 // 创建 WebSocket 服务器（复用 HTTP 服务器）

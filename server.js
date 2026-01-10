@@ -1,6 +1,6 @@
 /**
  * WebSocket 代理服务器
- * 功能：代理币安 WebSocket 连接，转发实时行情数据
+ * 功能：代理币安 WebSocket 连接，转发实时行情数据，提供缓存服务
  * 部署平台：Render
  */
 
@@ -13,6 +13,33 @@ const BINANCE_WS_URL = 'wss://stream.binance.com:9443/ws/!ticker@arr';
 
 // 存储所有连接的客户端
 const clients = new Set();
+
+// ==================== 缓存系统 ====================
+let marketDataCache = null;
+let lastCacheUpdate = 0;
+const CACHE_EXPIRY = 5 * 60 * 1000; // 缓存过期时间：5分钟
+
+/**
+ * 更新缓存
+ */
+function updateCache(data) {
+    marketDataCache = data;
+    lastCacheUpdate = Date.now();
+    console.log(`[缓存系统] 💾 缓存已更新: ${Array.isArray(data) ? data.length : 0} 个交易对`);
+}
+
+/**
+ * 获取缓存的币种数据
+ */
+function getCachedData() {
+    // 如果缓存存在且未过期，返回缓存
+    if (marketDataCache && (Date.now() - lastCacheUpdate < CACHE_EXPIRY)) {
+        console.log(`[缓存系统] ✅ 返回缓存数据: ${Array.isArray(marketDataCache) ? marketDataCache.length : 0} 个交易对`);
+        return marketDataCache;
+    }
+    console.log('[缓存系统] ⚠️ 缓存不存在或已过期');
+    return null;
+}
 
 // 创建币安 WebSocket 连接
 let binanceWs = null;
@@ -28,7 +55,20 @@ function connectToBinance() {
     });
 
     binanceWs.on('message', (data) => {
-        // 收到币安数据，直接转发原始数据（Buffer）
+        // 收到币安数据，更新缓存并转发原始数据（Buffer）
+        try {
+            const message = data.toString();
+            const parsed = JSON.parse(message);
+            
+            // 更新缓存（只更新有效的数据）
+            if (Array.isArray(parsed) && parsed.length > 0) {
+                updateCache(parsed);
+            }
+        } catch (e) {
+            // 如果解析失败，仍然转发原始数据，但不更新缓存
+            console.log('[代理服务器] 📦 收到币安数据（无法解析）');
+        }
+
         // 只在首次收到数据时打印日志，避免日志过多
         if (!binanceWs.hasReceivedData) {
             try {
@@ -88,6 +128,26 @@ const httpServer = http.createServer(async (req, res) => {
     if (req.method === 'OPTIONS') {
         res.writeHead(200);
         res.end();
+        return;
+    }
+
+    // 缓存数据端点
+    if (req.url === '/api/cache') {
+        const cachedData = getCachedData();
+        if (cachedData) {
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({
+                success: true,
+                timestamp: lastCacheUpdate,
+                data: cachedData
+            }));
+        } else {
+            res.writeHead(404, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ 
+                success: false, 
+                error: 'No cached data available' 
+            }));
+        }
         return;
     }
 

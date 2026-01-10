@@ -47,11 +47,12 @@ let binanceWs = null;
 function connectToBinance() {
     console.log('[代理服务器] 正在连接币安 WebSocket...');
     console.log('[代理服务器] 连接地址:', BINANCE_WS_URL);
-    
+
     binanceWs = new WebSocket(BINANCE_WS_URL);
 
     binanceWs.on('open', () => {
         console.log('[代理服务器] ✅ 成功连接到币安 WebSocket');
+        console.log('[代理服务器] 📡 等待接收币安实时数据...');
     });
 
     binanceWs.on('message', (data) => {
@@ -59,10 +60,25 @@ function connectToBinance() {
         try {
             const message = data.toString();
             const parsed = JSON.parse(message);
-            
+
             // 更新缓存（只更新有效的数据）
             if (Array.isArray(parsed) && parsed.length > 0) {
-                updateCache(parsed);
+                // 如果缓存为空，直接使用 WebSocket 数据
+                if (!marketDataCache) {
+                    updateCache(parsed);
+                    console.log(`[代理服务器] ✅ 首次收到 WebSocket 数据，缓存已更新: ${parsed.length} 个交易对`);
+                } else {
+                    // 如果缓存已存在，只更新活跃交易对的价格
+                    parsed.forEach(wsTicker => {
+                        const cacheIndex = marketDataCache.findIndex(t => t.symbol === wsTicker.symbol);
+                        if (cacheIndex !== -1) {
+                            marketDataCache[cacheIndex] = wsTicker;
+                        } else {
+                            // 如果 WebSocket 有新的交易对，添加到缓存
+                            marketDataCache.push(wsTicker);
+                        }
+                    });
+                }
             }
         } catch (e) {
             // 如果解析失败，仍然转发原始数据，但不更新缓存

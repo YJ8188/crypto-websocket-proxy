@@ -52,31 +52,37 @@ async function initializeMarketData() {
         const https = require('https');
         const url = 'https://api.binance.com/api/v3/ticker/24hr';
         
-        https.get(url, (res) => {
-            let data = '';
-            
-            res.on('data', (chunk) => {
-                data += chunk;
+        return new Promise((resolve, reject) => {
+            https.get(url, (res) => {
+                let data = '';
+                
+                res.on('data', (chunk) => {
+                    data += chunk;
+                });
+                
+                res.on('end', () => {
+                    try {
+                        const allTickers = JSON.parse(data);
+                        // 过滤出所有 USDT 交易对
+                        const usdtTickers = allTickers.filter(ticker => ticker.symbol.endsWith('USDT'));
+                        console.log(`[代理服务器] ✅ 从币安 API 获取了 ${usdtTickers.length} 个 USDT 交易对`);
+                        
+                        // 更新缓存
+                        updateCache(usdtTickers);
+                        resolve(usdtTickers);
+                    } catch (error) {
+                        console.error('[代理服务器] ❌ 解析币安 API 响应失败:', error);
+                        reject(error);
+                    }
+                });
+            }).on('error', (error) => {
+                console.error('[代理服务器] ❌ 请求币安 API 失败:', error);
+                reject(error);
             });
-            
-            res.on('end', () => {
-                try {
-                    const allTickers = JSON.parse(data);
-                    // 过滤出所有 USDT 交易对
-                    const usdtTickers = allTickers.filter(ticker => ticker.symbol.endsWith('USDT'));
-                    console.log(`[代理服务器] ✅ 从币安 API 获取了 ${usdtTickers.length} 个 USDT 交易对`);
-                    
-                    // 更新缓存
-                    updateCache(usdtTickers);
-                } catch (error) {
-                    console.error('[代理服务器] ❌ 解析币安 API 响应失败:', error);
-                }
-            });
-        }).on('error', (error) => {
-            console.error('[代理服务器] ❌ 请求币安 API 失败:', error);
         });
     } catch (error) {
         console.error('[代理服务器] ❌ 初始化市场数据失败:', error);
+        throw error;
     }
 }
 
@@ -86,10 +92,14 @@ function connectToBinance() {
     
     binanceWs = new WebSocket(BINANCE_WS_URL);
 
-    binanceWs.on('open', () => {
+    binanceWs.on('open', async () => {
         console.log('[代理服务器] ✅ 成功连接到币安 WebSocket');
         // 连接成功后，立即获取所有交易对
-        initializeMarketData();
+        try {
+            await initializeMarketData();
+        } catch (error) {
+            console.error('[代理服务器] ⚠️ 初始化市场数据失败，将使用 WebSocket 数据:', error);
+        }
     });
 
     binanceWs.on('message', (data) => {
